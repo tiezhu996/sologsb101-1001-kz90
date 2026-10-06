@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, type Component } from 'vue'
 import {
+  Calendar,
   DataLine,
   Document,
   Files,
@@ -8,6 +9,7 @@ import {
   Histogram,
   Odometer,
   PieChart,
+  Search,
   TrendCharts,
   WarningFilled
 } from '@element-plus/icons-vue'
@@ -49,6 +51,7 @@ const toneColor: Record<BadgeTone, string> = {
 }
 
 const iconMap: Record<string, Component> = {
+  Calendar,
   DataLine,
   Document,
   Files,
@@ -56,6 +59,7 @@ const iconMap: Record<string, Component> = {
   Histogram,
   Odometer,
   PieChart,
+  Search,
   TrendCharts,
   WarningFilled
 }

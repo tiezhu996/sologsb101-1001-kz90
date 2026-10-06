@@ -9,7 +9,7 @@ import type { WorkOrder, WorkOrderState } from '@/types/workOrder'
 export const DB_NAME = 'gbwindblade'
 
 /** 本地结构版本号：新增 / 修改表结构时必须递增，并补充 upgrade 迁移 */
-export const DB_VERSION = 2
+export const DB_VERSION = 3
 
 /** localStorage 侧的少量元数据键 */
 export const LS_KEYS = {
@@ -99,6 +99,24 @@ export class WindBladeDatabase extends Dexie {
           .modify((segment) => {
             if (typeof segment.sectionImage !== 'string') segment.sectionImage = ''
             if (!segment.face) segment.face = 'PS'
+          })
+      })
+    // v3：缺陷增加复检次数字段与最近复检日期（缺陷复检复发功能）
+    this.version(DB_VERSION)
+      .stores({
+        turbines: 'id, code, model, commissionDate, updatedAt',
+        blades: 'id, turbineId, serial, material, updatedAt',
+        segments: 'id, bladeId, index, face, updatedAt',
+        defects: 'id, segmentId, type, severity, face, state, foundAt, updatedAt',
+        workOrders: 'id, defectId, team, state, dueDate, updatedAt'
+      })
+      .upgrade(async (tx) => {
+        await tx
+          .table<Defect>('defects')
+          .toCollection()
+          .modify((defect) => {
+            if (typeof defect.reinspectCount !== 'number') defect.reinspectCount = 0
+            if (typeof defect.lastReinspectAt !== 'string') defect.lastReinspectAt = ''
           })
       })
   }
@@ -369,6 +387,8 @@ export async function seedDemoData(): Promise<boolean> {
             positionM,
             foundAt: dateOffset(spec.foundOffsetDays),
             state,
+            reinspectCount: 0,
+            lastReinspectAt: '',
             createdAt: now,
             updatedAt: now
           })

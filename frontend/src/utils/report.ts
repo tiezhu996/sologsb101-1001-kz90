@@ -1,6 +1,16 @@
 import type { Blade } from '@/types/blade'
 import type { Segment } from '@/types/segment'
-import { DEFECT_STATES, DEFECT_TYPES, SEVERITIES, type Defect, type DefectState, type DefectType, type Severity } from '@/types/defect'
+import {
+  DEFECT_STATES,
+  DEFECT_TYPES,
+  SEVERITIES,
+  lastReinspectAtOf,
+  reinspectCountOf,
+  type Defect,
+  type DefectState,
+  type DefectType,
+  type Severity
+} from '@/types/defect'
 import { WORK_ORDER_STATES, isOverdue, type WorkOrder, type WorkOrderState } from '@/types/workOrder'
 import { defectAreaCm2, percentOf, SEVERITY_WEIGHT } from '@/utils/severity'
 
@@ -18,6 +28,10 @@ export interface ReportSegmentLine {
   openCount: number
   heavyCount: number
   areaCm2: number
+  /** 段内各缺陷累计复检次数之和 */
+  reinspectCount: number
+  /** 段内最近一次复检日期，无则空串 */
+  lastReinspectAt: string
   defects: Defect[]
 }
 
@@ -29,6 +43,10 @@ export interface ReportBladeSection {
   openCount: number
   heavyCount: number
   areaCm2: number
+  /** 叶片各缺陷累计复检次数之和 */
+  reinspectCount: number
+  /** 叶片最近一次复检日期，无则空串 */
+  lastReinspectAt: string
 }
 
 /** 报告中的工单行（带缺陷定位信息） */
@@ -68,6 +86,10 @@ export interface TurbineReport {
     workOrderCount: number
     overdueCount: number
     riskScore: number
+    /** 全机各缺陷累计复检次数之和 */
+    reinspectCount: number
+    /** 全机最近一次复检日期（YYYY-MM-DD），无则空串 */
+    lastReinspectAt: string
   }
   severityDist: ReportDistributionRow[]
   typeDist: ReportDistributionRow[]
@@ -111,12 +133,18 @@ export function buildTurbineReport(
         const defects = source.defects
           .filter((defect) => defect.segmentId === segment.id)
           .sort((a, b) => SEVERITY_WEIGHT[b.severity] - SEVERITY_WEIGHT[a.severity])
+        const reinspectDates = defects
+          .map((defect) => lastReinspectAtOf(defect))
+          .filter((date) => date.length > 0)
+          .sort()
         return {
           segment,
           defectCount: defects.length,
           openCount: defects.filter((defect) => defect.state !== '已修复').length,
           heavyCount: defects.filter((defect) => defect.severity === '重度').length,
           areaCm2: defects.reduce((sum, defect) => sum + defectAreaCm2(defect.lengthMm, defect.widthMm), 0),
+          reinspectCount: defects.reduce((sum, defect) => sum + reinspectCountOf(defect), 0),
+          lastReinspectAt: reinspectDates.length > 0 ? reinspectDates[reinspectDates.length - 1] : '',
           defects
         }
       })
@@ -126,7 +154,14 @@ export function buildTurbineReport(
       defectCount: segments.reduce((sum, line) => sum + line.defectCount, 0),
       openCount: segments.reduce((sum, line) => sum + line.openCount, 0),
       heavyCount: segments.reduce((sum, line) => sum + line.heavyCount, 0),
-      areaCm2: segments.reduce((sum, line) => sum + line.areaCm2, 0)
+      areaCm2: segments.reduce((sum, line) => sum + line.areaCm2, 0),
+      reinspectCount: segments.reduce((sum, line) => sum + line.reinspectCount, 0),
+      lastReinspectAt:
+        segments
+          .map((line) => line.lastReinspectAt)
+          .filter((date) => date.length > 0)
+          .sort()
+          .pop() ?? ''
     }
   })
 
@@ -175,6 +210,13 @@ export function buildTurbineReport(
 
   const closedCount = defects.filter((defect) => defect.state === '已修复').length
   const riskScore = defects.reduce((sum, defect) => sum + SEVERITY_WEIGHT[defect.severity], 0)
+  const reinspectCount = defects.reduce((sum, defect) => sum + reinspectCountOf(defect), 0)
+  const allReinspectDates = defects
+    .map((defect) => lastReinspectAtOf(defect))
+    .filter((date) => date.length > 0)
+    .sort()
+  const lastReinspectAt =
+    allReinspectDates.length > 0 ? allReinspectDates[allReinspectDates.length - 1] : ''
 
   return {
     app: 'gbwindblade',
@@ -194,7 +236,9 @@ export function buildTurbineReport(
       areaCm2,
       workOrderCount: workOrders.length,
       overdueCount: workOrders.filter((line) => line.overdue).length,
-      riskScore
+      riskScore,
+      reinspectCount,
+      lastReinspectAt
     },
     severityDist: distribution(SEVERITIES as string[], severityCounts, defects.length),
     typeDist: distribution(DEFECT_TYPES as string[], typeCounts, defects.length),
@@ -237,6 +281,9 @@ export function reportToText(report: TurbineReport): string {
   lines.push(
     `  损伤面积 ${report.summary.areaCm2} cm²｜工单 ${report.summary.workOrderCount} 张（超期 ${report.summary.overdueCount} 张）｜风险分 ${report.summary.riskScore}`
   )
+  lines.push(
+    `  累计复检 ${report.summary.reinspectCount} 次｜最近复检 ${report.summary.lastReinspectAt || '—'}`
+  )
   lines.push('')
   lines.push('二、严重程度分布')
   report.severityDist.forEach((row) => lines.push(`  ${row.label}：${row.count} 条（${row.percent}%）`))
@@ -250,15 +297,15 @@ export function reportToText(report: TurbineReport): string {
   lines.push('五、叶片与展向分段明细')
   report.blades.forEach((section) => {
     lines.push(
-      `  [叶片 ${section.blade.serial}] 长度 ${section.blade.lengthM} m｜材质 ${section.blade.material}｜分段 ${section.segments.length} 段｜缺陷 ${section.defectCount} 条｜未闭环 ${section.openCount} 条`
+      `  [叶片 ${section.blade.serial}] 长度 ${section.blade.lengthM} m｜材质 ${section.blade.material}｜分段 ${section.segments.length} 段｜缺陷 ${section.defectCount} 条｜未闭环 ${section.openCount} 条｜复检 ${section.reinspectCount} 次｜最近复检 ${section.lastReinspectAt || '—'}`
     )
     section.segments.forEach((line) => {
       lines.push(
-        `    第 ${line.segment.index} 段 ${line.segment.startM}-${line.segment.endM} m｜${line.segment.face}｜翼型 ${line.segment.airfoil}｜剖面图 ${line.segment.sectionImage || '未上传'}｜缺陷 ${line.defectCount} 条`
+        `    第 ${line.segment.index} 段 ${line.segment.startM}-${line.segment.endM} m｜${line.segment.face}｜翼型 ${line.segment.airfoil}｜剖面图 ${line.segment.sectionImage || '未上传'}｜缺陷 ${line.defectCount} 条｜复检 ${line.reinspectCount} 次｜最近复检 ${line.lastReinspectAt || '—'}`
       )
       line.defects.forEach((defect) => {
         lines.push(
-          `      · ${defect.type}（${defect.severity}）${defect.lengthMm}×${defect.widthMm} mm｜${defect.face}｜${defect.positionM} m｜发现 ${defect.foundAt}｜${defect.state}`
+          `      · ${defect.type}（${defect.severity}）${defect.lengthMm}×${defect.widthMm} mm｜${defect.face}｜${defect.positionM} m｜发现 ${defect.foundAt}｜${defect.state}｜复检 ${reinspectCountOf(defect)} 次｜最近复检 ${lastReinspectAtOf(defect) || '—'}`
         )
       })
     })

@@ -136,15 +136,18 @@ export const useWorkOrderStore = defineStore('workOrder', () => {
     }
   })
 
-  /** 可派工的缺陷：未修复且尚无工单（以缺陷表为准，不能以工单行为准） */
+  /** 可派工的缺陷：未修复且没有进行中工单（复发缺陷历史工单已闭环，可再派新单） */
   const dispatchableDefects = computed<DispatchOption[]>(() => {
-    const dispatched = new Set(orders.value.map((order) => order.defectId))
     const segmentMap = new Map(segments.value.map((segment) => [segment.id, segment]))
     const bladeMap = new Map(blades.value.map((blade) => [blade.id, blade]))
     const turbineMap = new Map(turbines.value.map((turbine) => [turbine.id, turbine]))
     const options: DispatchOption[] = []
     defects.value.forEach((defect) => {
-      if (defect.state === '已修复' || dispatched.has(defect.id)) return
+      if (defect.state === '已修复') return
+      const hasOpenOrder = orders.value.some(
+        (order) => order.defectId === defect.id && order.state !== '已闭环'
+      )
+      if (hasOpenOrder) return
       const segment = segmentMap.get(defect.segmentId) ?? null
       const blade = segment ? bladeMap.get(segment.bladeId) ?? null : null
       const turbine = blade ? turbineMap.get(blade.turbineId) ?? null : null

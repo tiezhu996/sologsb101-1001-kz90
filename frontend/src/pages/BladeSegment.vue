@@ -31,6 +31,8 @@ import {
   DEFECT_STATES,
   DEFECT_TYPES,
   SEVERITIES,
+  lastReinspectAtOf,
+  reinspectCountOf,
   type Defect,
   type DefectState,
   type DefectType,
@@ -682,6 +684,22 @@ const faceSummary = computed(() =>
                     <template #default="{ row: defect }">{{ defect.positionM }} m</template>
                   </el-table-column>
                   <el-table-column label="发现日期" prop="foundAt" width="120" />
+                  <el-table-column label="复检次数" width="90">
+                    <template #default="{ row: defect }">
+                      <el-tag
+                        size="small"
+                        :type="reinspectCountOf(defect) > 0 ? 'danger' : 'info'"
+                        :effect="reinspectCountOf(defect) > 0 ? 'dark' : 'plain'"
+                      >
+                        {{ reinspectCountOf(defect) }} 次
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="最近复检" width="120">
+                    <template #default="{ row: defect }">
+                      <span class="mono">{{ lastReinspectAtOf(defect) || '—' }}</span>
+                    </template>
+                  </el-table-column>
                   <el-table-column label="状态" width="150">
                     <template #default="{ row: defect }">
                       <el-select
@@ -750,15 +768,23 @@ const faceSummary = computed(() =>
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="缺陷 / 未闭环 / 重度" width="180">
+          <el-table-column label="缺陷 / 未闭环 / 重度" width="185">
             <template #default="{ row }">
-              <el-tag size="small" type="warning">{{ bladeStore.segmentStat(row.id).defectCount }} 条</el-tag>
-              <el-tag size="small" type="danger" effect="plain">
-                未闭环 {{ bladeStore.segmentStat(row.id).openCount }}
-              </el-tag>
-              <el-tag size="small" type="info" effect="plain">
-                重度 {{ bladeStore.segmentStat(row.id).heavyCount }}
-              </el-tag>
+              <div class="segment-stat-cell">
+                <div>
+                  <el-tag size="small" type="warning">{{ bladeStore.segmentStat(row.id).defectCount }} 条</el-tag>
+                  <el-tag size="small" type="danger" effect="plain">
+                    未闭环 {{ bladeStore.segmentStat(row.id).openCount }}
+                  </el-tag>
+                  <el-tag size="small" type="info" effect="plain">
+                    重度 {{ bladeStore.segmentStat(row.id).heavyCount }}
+                  </el-tag>
+                </div>
+                <div class="muted mono segment-stat-cell__reinspect">
+                  复检 {{ bladeStore.segmentStat(row.id).reinspectCount }} 次｜最近
+                  {{ bladeStore.segmentStat(row.id).lastReinspectAt || '—' }}
+                </div>
+              </div>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="200" fixed="right">
@@ -940,6 +966,17 @@ const faceSummary = computed(() =>
 .expand-box {
   padding: 8px 12px 12px;
   background: #f7fbfd;
+}
+
+.segment-stat-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.segment-stat-cell__reinspect {
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .expand-box__head {

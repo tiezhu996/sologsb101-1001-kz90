@@ -27,8 +27,40 @@ export interface Defect {
   /** 发现日期 YYYY-MM-DD */
   foundAt: string
   state: DefectState
+  /** 累计复检次数：复检判为复发时加一；v3 前的历史记录为空 */
+  reinspectCount?: number
+  /** 最近一次复检日期 YYYY-MM-DD；未复检过为空 */
+  lastReinspectAt?: string
   createdAt: number
   updatedAt: number
+}
+
+/** 复检入参：选择一条已修复缺陷作为复检对象，填写本次复检情况 */
+export interface ReinspectionInput {
+  /** 复检入口：被复检的已修复缺陷 id */
+  defectId: string
+  /** 复检日期 YYYY-MM-DD（复发时回写为缺陷发现日期） */
+  reinspectAt: string
+  /** 复检位置（米） */
+  positionM: number
+  /** 本次复检缺陷类型，默认与被复检缺陷一致；改型则按新缺陷另存 */
+  type: DefectType
+  /** 本次复检等级（复发后以本次填报为准，不沿用旧等级） */
+  severity: Severity
+}
+
+/** 复检提交结果 */
+export interface ReinspectionResult {
+  /** true=匹配到同段同型的已修复缺陷，按复发回写；false=另存为一条新缺陷 */
+  recurred: boolean
+  /** 复发时为被回写的缺陷 id；另存时为新缺陷 id */
+  defectId: string
+  /** 实际命中的分段（位置可能改落在同叶片的其他分段上） */
+  segmentId: string
+  /** 命中的候选缺陷（复发时才有） */
+  matchedDefect?: Defect
+  /** 提交后该缺陷的累计复检次数（复发时为加一后的值） */
+  reinspectCount: number
 }
 
 export const DEFECT_TYPES: DefectType[] = ['裂纹', '雷击', '前缘腐蚀', '油污', '砂眼']
@@ -75,6 +107,16 @@ export function createEmptyDefectFilter(): DefectFilterState {
     states: [],
     onlyOpen: false
   }
+}
+
+/** 累计复检次数（兼容 v3 前未补全该字段的历史记录） */
+export function reinspectCountOf(defect: Defect): number {
+  return typeof defect.reinspectCount === 'number' ? defect.reinspectCount : 0
+}
+
+/** 最近复检日期（未复检过返回空串） */
+export function lastReinspectAtOf(defect: Defect): string {
+  return defect.lastReinspectAt ?? ''
 }
 
 /** 缺陷尺寸文案：1200 × 35 mm */

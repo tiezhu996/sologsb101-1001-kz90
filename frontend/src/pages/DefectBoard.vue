@@ -2,7 +2,7 @@
 import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Plus, Position, Refresh, Tools } from '@element-plus/icons-vue'
+import { Plus, Position, Refresh, Search, Tools } from '@element-plus/icons-vue'
 import EmptyPanel from '@/components/common/EmptyPanel.vue'
 import FilterBar, { type FilterModel } from '@/components/common/FilterBar.vue'
 import SeverityTag from '@/components/common/SeverityTag.vue'
@@ -20,9 +20,12 @@ import {
   DEFECT_STATES,
   DEFECT_TYPES,
   SEVERITIES,
+  lastReinspectAtOf,
+  reinspectCountOf,
   type Defect,
   type DefectState,
   type DefectType,
+  type ReinspectionInput,
   type Severity
 } from '@/types/defect'
 import { FACE_LABEL, SEGMENT_FACES, formatRange, type SegmentFace } from '@/types/segment'
@@ -366,7 +369,10 @@ async function submitDispatch(): Promise<void> {
     let created = 0
     let reassigned = 0
     for (const row of dispatchTargets.value) {
-      const existing = workOrderStore.ordersOfDefect(row.defect.id)[0]
+      // 只改派进行中的工单；复发缺陷历史工单已闭环时应另建新单
+      const existing = workOrderStore
+        .ordersOfDefect(row.defect.id)
+        .find((order) => order.state !== '已闭环')
       if (existing) {
         await workOrderStore.updateWorkOrder(existing.id, {
           team: dispatchForm.team,
@@ -389,6 +395,88 @@ async function submitDispatch(): Promise<void> {
     )
   } finally {
     dispatchSubmitting.value = false
+  }
+}
+
+/* ---------------- 复检 ---------------- */
+const reinspectVisible = ref(false)
+const reinspectSubmitting = ref(false)
+const reinspectFormRef = ref<FormInstance>()
+const reinspectTarget = ref<DefectRow | null>(null)
+const reinspectForm = reactive({
+  reinspectAt: todayString(),
+  positionM: 0,
+  type: '裂纹' as DefectType,
+  severity: '轻度' as Severity
+})
+
+const reinspectRules: FormRules = {
+  reinspectAt: [{ required: true, message: '请选择复检日期', trigger: 'change' }],
+  positionM: [{ required: true, message: '请填写复检位置米数', trigger: 'blur' }],
+  severity: [{ required: true, message: '请选择本次复检等级', trigger: 'change' }]
+}
+
+/** 复检对象的所属分段（用于回显原区间） */
+const reinspectSegment = computed(() => reinspectTarget.value?.segment ?? null)
+
+function openReinspect(row: DefectRow): void {
+  if (row.defect.state !== '已修复') {
+    ElMessage.warning('只有已修复（已闭环验收）的缺陷才能登记复检')
+    return
+  }
+  reinspectTarget.value = row
+  reinspectForm.reinspectAt = todayString()
+  reinspectForm.positionM = row.defect.positionM
+  reinspectForm.type = row.defect.type
+  reinspectForm.severity = row.defect.severity
+  reinspectVisible.value = true
+}
+
+async function submitReinspect(): Promise<void> {
+  if (!reinspectFormRef.value || !reinspectTarget.value) return
+  const valid = await reinspectFormRef.value.validate().catch(() => false)
+  if (!valid) return
+  const target = reinspectTarget.value
+  const segment = target.segment
+  if (segment && (reinspectForm.positionM < segment.startM || reinspectForm.positionM > segment.endM)) {
+    // 位置出原分段：允许提交，但会按新缺陷另存，这里给出确认
+    try {
+      await ElMessageBox.confirm(
+        `复检位置 ${reinspectForm.positionM} m 已超出原分段区间 ${formatRange(
+          segment.startM,
+          segment.endM
+        )}，将另存为一条新缺陷（不作为复发）。确认继续？`,
+        '位置出原分段',
+        { type: 'warning', confirmButtonText: '另存新缺陷', cancelButtonText: '返回修改' }
+      )
+    } catch {
+      return
+    }
+  }
+  const payload: ReinspectionInput = {
+    defectId: target.defect.id,
+    reinspectAt: reinspectForm.reinspectAt,
+    positionM: reinspectForm.positionM,
+    type: reinspectForm.type,
+    severity: reinspectForm.severity
+  }
+  reinspectSubmitting.value = true
+  try {
+    const result = await defectStore.submitReinspection(payload)
+    reinspectVisible.value = false
+    if (result.recurred) {
+      ElMessage.warning(
+        `判定为复发：匹配到同分段同类的「${result.matchedDefect?.type ?? ''}」缺陷，复检次数已累计为 ${
+          result.reinspectCount
+        } 次，状态回到待处理；原工单保持闭环。`
+      )
+    } else {
+      ElMessage.success(
+        `复检位置 / 类型不符合复发条件，已另存为一条新的「待处理」缺陷（${payload.type}·${payload.severity}）。`
+      )
+    }
+  } finally {
+    reinspectSubmitting.value = false
   }
 }
 
@@ -573,6 +661,20 @@ const tableRows = computed(() => defectFilter.sortedRows.value)
           </template>
         </el-table-column>
         <el-table-column label="发现日期" prop="defect.foundAt" width="120" />
+        <el-table-column label="复检次数 / 最近复检" width="150">
+          <template #default="{ row }">
+            <div class="cell-stack">
+              <el-tag
+                size="small"
+                :type="reinspectCountOf(row.defect) > 0 ? 'danger' : 'info'"
+                :effect="reinspectCountOf(row.defect) > 0 ? 'dark' : 'plain'"
+              >
+                复检 {{ reinspectCountOf(row.defect) }} 次
+              </el-tag>
+              <span class="muted mono">{{ lastReinspectAtOf(row.defect) || '—' }}</span>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="110">
           <template #default="{ row }">
             <span
@@ -600,10 +702,19 @@ const tableRows = computed(() => defectFilter.sortedRows.value)
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column label="操作" width="320" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row.defect)">编辑</el-button>
             <el-button link type="primary" :icon="Tools" @click="openDispatch([row])">派工</el-button>
+            <el-button
+              link
+              type="warning"
+              :icon="Search"
+              :disabled="row.defect.state !== '已修复'"
+              @click="openReinspect(row)"
+            >
+              复检
+            </el-button>
             <el-button link type="primary" :icon="Position" @click="locate(row)">定位分段</el-button>
             <el-button link type="danger" @click="removeDefect(row)">删除</el-button>
           </template>
@@ -728,6 +839,57 @@ const tableRows = computed(() => defectFilter.sortedRows.value)
         <el-button @click="dispatchVisible = false">取消</el-button>
         <el-button type="primary" :loading="dispatchSubmitting" @click="submitDispatch">
           确认派工
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="reinspectVisible" title="缺陷复检登记" width="620px" destroy-on-close>
+      <el-alert
+        v-if="reinspectTarget"
+        type="info"
+        :closable="false"
+        show-icon
+        class="dispatch-alert"
+        :title="`复检对象：${reinspectTarget.turbine?.code ?? '—'}｜叶片 ${
+          reinspectTarget.blade?.serial ?? '—'
+        }｜${
+          reinspectSegment ? `第 ${reinspectSegment.index} 段 · ${formatRange(reinspectSegment.startM, reinspectSegment.endM)}` : '分段缺失'
+        }｜${reinspectTarget.defect.type}（原 ${reinspectTarget.defect.severity}）｜原位置 ${
+          reinspectTarget.defect.positionM
+        } m｜已复检 ${reinspectCountOf(reinspectTarget.defect)} 次`"
+        description="位置仍落在原分段区间且类型一致即判复发：复检次数 +1、发现日期取复检日期、状态回到待处理，原工单继续闭环不撤回；位置出原分段或类型不符则另存新缺陷。"
+      />
+      <el-form ref="reinspectFormRef" :model="reinspectForm" :rules="reinspectRules" label-width="120px">
+        <el-form-item label="复检日期" prop="reinspectAt">
+          <el-date-picker v-model="reinspectForm.reinspectAt" type="date" value-format="YYYY-MM-DD" />
+          <span class="muted unit">复发时作为新的发现日期</span>
+        </el-form-item>
+        <el-form-item label="复检位置（米）" prop="positionM">
+          <el-input-number v-model="reinspectForm.positionM" :min="0" :max="130" :step="0.1" :precision="2" />
+          <span class="muted unit">
+            原分段区间
+            <template v-if="reinspectSegment">
+              {{ formatRange(reinspectSegment.startM, reinspectSegment.endM) }}
+            </template>
+          </span>
+        </el-form-item>
+        <el-form-item label="缺陷类型">
+          <el-tag effect="plain">{{ reinspectForm.type }}</el-tag>
+          <span class="muted unit">类型与原缺陷一致方可判复发；如需改型请直接新标注缺陷</span>
+        </el-form-item>
+        <el-form-item label="本次等级" prop="severity">
+          <el-radio-group v-model="reinspectForm.severity">
+            <el-radio-button v-for="severity in SEVERITIES" :key="severity" :value="severity">
+              {{ severity }}
+            </el-radio-button>
+          </el-radio-group>
+          <span class="muted unit">复发后以本次填报为准，不沿用旧等级</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="reinspectVisible = false">取消</el-button>
+        <el-button type="primary" :loading="reinspectSubmitting" @click="submitReinspect">
+          提交复检
         </el-button>
       </template>
     </el-dialog>

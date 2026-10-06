@@ -26,7 +26,7 @@ import {
 import { buildTurbineReport, reportToText, type TurbineReport } from '@/utils/report'
 import { formatArea, formatSize } from '@/utils/severity'
 import { FACE_LABEL, formatRange, type SegmentFace } from '@/types/segment'
-import { DEFECT_STATE_COLOR, type DefectState } from '@/types/defect'
+import { DEFECT_STATE_COLOR, lastReinspectAtOf, reinspectCountOf, type DefectState } from '@/types/defect'
 import type { BackupPayload } from '@/utils/db'
 
 const turbineStore = useTurbineStore()
@@ -314,6 +314,19 @@ watch(bladePanels, (panels) => {
           />
           <StatBadge label="损伤面积" :value="formatArea(report.summary.areaCm2)" tone="warning" icon="Odometer" />
           <StatBadge label="工单 / 超期" :value="`${report.summary.workOrderCount} / ${report.summary.overdueCount}`" tone="info" icon="Files" />
+          <StatBadge
+            label="累计复检"
+            :value="report.summary.reinspectCount"
+            suffix="次"
+            :tone="report.summary.reinspectCount > 0 ? 'danger' : 'default'"
+            icon="Search"
+          />
+          <StatBadge
+            label="最近复检日期"
+            :value="report.summary.lastReinspectAt || '—'"
+            tone="default"
+            icon="Calendar"
+          />
         </div>
 
         <div class="section-card">
@@ -321,7 +334,11 @@ watch(bladePanels, (panels) => {
             <h3>
               巡检报告预览 · {{ report.turbine.code }}（{{ report.turbine.model }}）
             </h3>
-            <span class="muted">风险分 {{ report.summary.riskScore }} · 生成时间 {{ report.generatedAt.replace('T', ' ').slice(0, 19) }}</span>
+            <span class="muted">
+              风险分 {{ report.summary.riskScore }} · 复检 {{ report.summary.reinspectCount }} 次 · 最近复检
+              {{ report.summary.lastReinspectAt || '—' }} · 生成时间
+              {{ report.generatedAt.replace('T', ' ').slice(0, 19) }}
+            </span>
           </div>
           <el-descriptions :column="4" size="small" border class="report-meta">
             <el-descriptions-item label="轮毂高度">{{ report.turbine.hubHeightM }} m</el-descriptions-item>
@@ -384,6 +401,10 @@ watch(bladePanels, (panels) => {
                   <el-tag size="small" type="warning">缺陷 {{ panel.defectCount }} 条</el-tag>
                   <el-tag size="small" type="danger" effect="plain">未闭环 {{ panel.openCount }} 条</el-tag>
                   <el-tag size="small" type="info" effect="plain">重度 {{ panel.heavyCount }} 条</el-tag>
+                  <el-tag size="small" :type="panel.reinspectCount > 0 ? 'danger' : 'info'" effect="plain">
+                    复检 {{ panel.reinspectCount }} 次
+                  </el-tag>
+                  <el-tag size="small" effect="plain">最近复检 {{ panel.lastReinspectAt || '—' }}</el-tag>
                   <el-tag size="small" effect="plain">损伤 {{ formatArea(panel.areaCm2) }}</el-tag>
                 </div>
               </template>
@@ -410,6 +431,16 @@ watch(bladePanels, (panels) => {
                     {{ row.defectCount }} / {{ row.openCount }} / {{ row.heavyCount }}
                   </template>
                 </el-table-column>
+                <el-table-column label="复检次数" width="90">
+                  <template #default="{ row }">
+                    <span :class="row.reinspectCount > 0 ? 'text-danger mono' : 'mono'">{{ row.reinspectCount }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="最近复检" width="120">
+                  <template #default="{ row }">
+                    <span class="mono">{{ row.lastReinspectAt || '—' }}</span>
+                  </template>
+                </el-table-column>
                 <el-table-column label="损伤面积" width="120">
                   <template #default="{ row }">{{ formatArea(row.areaCm2) }}</template>
                 </el-table-column>
@@ -432,6 +463,22 @@ watch(bladePanels, (panels) => {
                         <template #default="{ row: defect }">{{ defect.positionM }} m</template>
                       </el-table-column>
                       <el-table-column label="发现日期" prop="foundAt" width="120" />
+                      <el-table-column label="复检次数" width="90">
+                        <template #default="{ row: defect }">
+                          <el-tag
+                            size="small"
+                            :type="reinspectCountOf(defect) > 0 ? 'danger' : 'info'"
+                            :effect="reinspectCountOf(defect) > 0 ? 'dark' : 'plain'"
+                          >
+                            {{ reinspectCountOf(defect) }} 次
+                          </el-tag>
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="最近复检" width="120">
+                        <template #default="{ row: defect }">
+                          <span class="mono">{{ lastReinspectAtOf(defect) || '—' }}</span>
+                        </template>
+                      </el-table-column>
                       <el-table-column label="状态" width="100">
                         <template #default="{ row: defect }">
                           <span :style="{ color: stateColor(defect.state), fontWeight: 600 }">

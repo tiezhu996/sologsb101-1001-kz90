@@ -16,7 +16,7 @@ import {
   type BladeMaterial
 } from '@/types/blade'
 import type { Segment } from '@/types/segment'
-import type { Defect } from '@/types/defect'
+import { lastReinspectAtOf, reinspectCountOf, type Defect } from '@/types/defect'
 import type { WorkOrder } from '@/types/workOrder'
 import { percentOf } from '@/utils/severity'
 
@@ -105,7 +105,7 @@ export const useTurbineStore = defineStore('turbine', () => {
     return workOrders.value.filter((order) => defectIds.has(order.defectId))
   }
 
-  /** 机组卡片回显的缺陷总数与未闭环数 */
+  /** 机组卡片回显的缺陷总数、未闭环数与复检信息 */
   const stats = computed<TurbineStat[]>(() =>
     turbines.value.map((turbine) => {
       const bladeList = bladesOfTurbine(turbine.id)
@@ -113,6 +113,10 @@ export const useTurbineStore = defineStore('turbine', () => {
       const defectList = defectsOfTurbine(turbine.id)
       const openCount = defectList.filter((defect) => defect.state !== '已修复').length
       const heavyCount = defectList.filter((defect) => defect.severity === '重度').length
+      const reinspectDates = defectList
+        .map((defect) => lastReinspectAtOf(defect))
+        .filter((date) => date.length > 0)
+        .sort()
       return {
         turbineId: turbine.id,
         bladeCount: bladeList.length,
@@ -120,6 +124,8 @@ export const useTurbineStore = defineStore('turbine', () => {
         defectCount: defectList.length,
         openCount,
         heavyCount,
+        reinspectCount: defectList.reduce((sum, defect) => sum + reinspectCountOf(defect), 0),
+        lastReinspectAt: reinspectDates.length > 0 ? reinspectDates[reinspectDates.length - 1] : '',
         heavyPercent: percentOf(heavyCount, defectList.length)
       }
     })

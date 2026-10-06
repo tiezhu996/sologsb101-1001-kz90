@@ -44,6 +44,10 @@ export interface TurbineStat {
   openCount: number
   /** 重度缺陷数 */
   heavyCount: number
+  /** 全机各缺陷累计复检次数之和 */
+  reinspectCount: number
+  /** 全机最近一次复检日期（YYYY-MM-DD），无则空串 */
+  lastReinspectAt: string
   /** 重度占比，0-100 的整数 */
   heavyPercent: number
 }

@@ -1,13 +1,17 @@
 import { defineStore } from 'pinia'
 import { computed, reactive, ref } from 'vue'
-import { db } from '@/utils/db'
+import { db, round2 } from '@/utils/db'
 import { useIdbTable } from '@/hooks/useIdbTable'
 import {
   createEmptyDefectFilter,
+  lastReinspectAtOf,
+  reinspectCountOf,
   type Defect,
   type DefectFilterState,
   type DefectState,
   type DefectType,
+  type ReinspectionInput,
+  type ReinspectionResult,
   type Severity
 } from '@/types/defect'
 import type { Segment } from '@/types/segment'
@@ -61,6 +65,11 @@ export const useDefectStore = defineStore('defect', () => {
     })
   })
 
+  /** 可作为复检对象的缺陷行：仅「已修复」状态（验收闭环后才安排复检） */
+  const reinspectableRows = computed<DefectRow[]>(() =>
+    rows.value.filter((row) => row.defect.state === '已修复')
+  )
+
   /** 应用筛选条件后的缺陷行（全局，不含叶片范围限定） */
   const filteredRows = computed<DefectRow[]>(() =>
     rows.value.filter((row) => {
@@ -69,9 +78,9 @@ export const useDefectStore = defineStore('defect', () => {
       if (kw.length > 0) {
         const haystack = `${defect.type}${defect.severity}${defect.face}${defect.state}${
           defect.foundAt
-        }${segment?.airfoil ?? ''}${segment?.sectionImage ?? ''}${blade?.serial ?? ''}${
-          turbine?.code ?? ''
-        }`
+        }${lastReinspectAtOf(defect)}${segment?.airfoil ?? ''}${segment?.sectionImage ?? ''}${
+          blade?.serial ?? ''
+        }${turbine?.code ?? ''}`
         if (!haystack.includes(kw)) return false
       }
       if (filter.value.turbines.length > 0 && (!turbine || !filter.value.turbines.includes(turbine.id)))
@@ -301,6 +310,82 @@ export const useDefectStore = defineStore('defect', () => {
     return ids.length
   }
 
+  /**
+   * 提交复检（复检对象必须是一条「已修复」缺陷）：
+   * - 复检位置仍落在原分段区间且类型一致 → 判定复发：复检次数 +1、发现日期取复检日期、
+   *   等级与位置以本次填报为准、状态回到「待处理」；原维修工单保持已闭环，不撤回验收。
+   * - 位置出原分段或类型不符 → 另存为一条新的「待处理」缺陷，原缺陷保持已修复。
+   * 同一分段有多条同型已修复历史缺陷时，位置离复检点最近的一条优先（并列时取最近更新的）。
+   */
+  async function submitReinspection(input: ReinspectionInput): Promise<ReinspectionResult> {
+    const target = defectById(input.defectId)
+    if (!target) throw new Error('复检对象不存在或已被删除')
+    if (target.state !== '已修复') throw new Error('只有已修复（已闭环验收）的缺陷才能登记复检')
+    const positionM = round2(input.positionM)
+    const originSegment = segments.value.find((segment) => segment.id === target.segmentId)
+    const inOriginRange =
+      !!originSegment && positionM >= originSegment.startM && positionM <= originSegment.endM
+
+    // 同分段 + 同类型 + 已修复的历史缺陷候选（复检对象自身一定在候选内）
+    const candidates = defects.value
+      .filter(
+        (defect) =>
+          defect.segmentId === target.segmentId &&
+          defect.type === input.type &&
+          defect.state === '已修复'
+      )
+      .sort((a, b) => {
+        const distA = Math.abs(a.positionM - positionM)
+        const distB = Math.abs(b.positionM - positionM)
+        if (distA !== distB) return distA - distB
+        return (b.updatedAt ?? 0) - (a.updatedAt ?? 0)
+      })
+
+    if (inOriginRange && candidates.length > 0) {
+      const matched = candidates[0]
+      const nextCount = reinspectCountOf(matched) + 1
+      await defectsTable.update(matched.id, {
+        severity: input.severity,
+        positionM,
+        foundAt: input.reinspectAt,
+        state: '待处理',
+        reinspectCount: nextCount,
+        lastReinspectAt: input.reinspectAt
+      })
+      return {
+        recurred: true,
+        defectId: matched.id,
+        segmentId: matched.segmentId,
+        matchedDefect: matched,
+        reinspectCount: nextCount
+      }
+    }
+
+    // 位置出原分段（或类型不符）：另存新缺陷。位置若落在同叶片其它分段则挂到该分段
+    let newSegmentId = target.segmentId
+    if (originSegment) {
+      const holder = segments.value
+        .filter((segment) => segment.bladeId === originSegment.bladeId)
+        .sort((a, b) => a.index - b.index)
+        .find((segment) => positionM >= segment.startM && positionM <= segment.endM)
+      if (holder) newSegmentId = holder.id
+    }
+    const created = await createDefect({
+      segmentId: newSegmentId,
+      type: input.type,
+      severity: input.severity,
+      lengthMm: target.lengthMm,
+      widthMm: target.widthMm,
+      face: target.face,
+      positionM,
+      foundAt: input.reinspectAt,
+      state: '待处理',
+      reinspectCount: 0,
+      lastReinspectAt: ''
+    })
+    return { recurred: false, defectId: created.id, segmentId: newSegmentId, reinspectCount: 0 }
+  }
+
   return {
     filter,
     selectedIds,
@@ -312,6 +397,7 @@ export const useDefectStore = defineStore('defect', () => {
     loading,
     defectsReady,
     rows,
+    reinspectableRows,
     filteredRows,
     sortedRows,
     severityCounts,
@@ -345,6 +431,7 @@ export const useDefectStore = defineStore('defect', () => {
     bulkSetType,
     bulkSetFace,
     bulkSetState,
-    setState
+    setState,
+    submitReinspection
   }
 })
