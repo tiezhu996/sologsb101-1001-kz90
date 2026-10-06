@@ -24,9 +24,13 @@ export interface Defect {
   face: SegmentFace
   /** 展向位置（米），应落在所属分段的 startM-endM 区间内 */
   positionM: number
-  /** 发现日期 YYYY-MM-DD */
+  /** 发现日期 YYYY-MM-DD；复发后取最近一次复检日期 */
   foundAt: string
   state: DefectState
+  /** 复检次数：已修复缺陷回访复检被判为复发时累加 */
+  recheckCount: number
+  /** 最近复检日期 YYYY-MM-DD，从未复检为 null */
+  lastRecheckAt: string | null
   createdAt: number
   updatedAt: number
 }
@@ -80,4 +84,38 @@ export function createEmptyDefectFilter(): DefectFilterState {
 /** 缺陷尺寸文案：1200 × 35 mm */
 export function formatDefectSize(lengthMm: number, widthMm: number): string {
   return `${lengthMm} × ${widthMm} mm`
+}
+
+/** 复检填报内容：在一条已修复缺陷上发起回访复检 */
+export interface RecheckInput {
+  defectId: string
+  /** 复检日期 YYYY-MM-DD */
+  recheckAt: string
+  /** 复检位置米数（展向） */
+  positionM: number
+  /** 本次观测到的缺陷类型 */
+  type: DefectType
+  /** 本次等级（复发后以本次填报为准，不沿用旧等级） */
+  severity: Severity
+}
+
+/** 复检结果：复发（命中同分段历史缺陷）或另存新缺陷 */
+export type RecheckOutcome =
+  | { kind: 'recurred'; defectId: string; recheckCount: number }
+  | { kind: 'created'; defectId: string }
+
+/** 一组缺陷的复检汇总：累计复检次数 + 最近复检日期（YYYY-MM-DD 可直接按字符串比较） */
+export function recheckSummaryOf(defects: Array<Pick<Defect, 'recheckCount' | 'lastRecheckAt'>>): {
+  recheckCount: number
+  lastRecheckAt: string | null
+} {
+  let recheckCount = 0
+  let lastRecheckAt: string | null = null
+  defects.forEach((defect) => {
+    recheckCount += defect.recheckCount ?? 0
+    if (defect.lastRecheckAt && (lastRecheckAt === null || defect.lastRecheckAt > lastRecheckAt)) {
+      lastRecheckAt = defect.lastRecheckAt
+    }
+  })
+  return { recheckCount, lastRecheckAt }
 }

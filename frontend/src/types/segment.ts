@@ -56,6 +56,10 @@ export interface SegmentStat {
   defectCount: number
   openCount: number
   heavyCount: number
+  /** 段内缺陷累计复检次数 */
+  recheckCount: number
+  /** 段内最近复检日期，无复检记录为 null */
+  lastRecheckAt: string | null
 }
 
 /** 生成分段时使用的参数 */

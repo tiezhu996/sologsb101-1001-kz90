@@ -4,7 +4,7 @@ import { db, readUiPrefs, round2, writeUiPrefs } from '@/utils/db'
 import { useIdbTable } from '@/hooks/useIdbTable'
 import type { Blade, BladeStat } from '@/types/blade'
 import type { Segment, SegmentGenerateOptions, SegmentStat } from '@/types/segment'
-import type { Defect } from '@/types/defect'
+import { recheckSummaryOf, type Defect } from '@/types/defect'
 import type { WorkOrder } from '@/types/workOrder'
 
 export interface GenerateSegmentsResult {
@@ -68,11 +68,14 @@ export const useBladeStore = defineStore('blade', () => {
     const map: Record<string, SegmentStat> = {}
     segments.value.forEach((segment) => {
       const list = defectsOfSegment(segment.id)
+      const recheck = recheckSummaryOf(list)
       map[segment.id] = {
         segmentId: segment.id,
         defectCount: list.length,
         openCount: list.filter((defect) => defect.state !== '已修复').length,
-        heavyCount: list.filter((defect) => defect.severity === '重度').length
+        heavyCount: list.filter((defect) => defect.severity === '重度').length,
+        recheckCount: recheck.recheckCount,
+        lastRecheckAt: recheck.lastRecheckAt
       }
     })
     return map
@@ -100,7 +103,9 @@ export const useBladeStore = defineStore('blade', () => {
         segmentId,
         defectCount: 0,
         openCount: 0,
-        heavyCount: 0
+        heavyCount: 0,
+        recheckCount: 0,
+        lastRecheckAt: null
       }
     )
   }

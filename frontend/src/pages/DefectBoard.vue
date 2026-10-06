@@ -2,9 +2,10 @@
 import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Plus, Position, Refresh, Tools } from '@element-plus/icons-vue'
+import { Plus, Position, Refresh, Search, Tools } from '@element-plus/icons-vue'
 import EmptyPanel from '@/components/common/EmptyPanel.vue'
 import FilterBar, { type FilterModel } from '@/components/common/FilterBar.vue'
+import RecheckDialog from '@/components/common/RecheckDialog.vue'
 import SeverityTag from '@/components/common/SeverityTag.vue'
 import StatBadge from '@/components/common/StatBadge.vue'
 import { useBladeStore } from '@/stores/bladeStore'
@@ -392,6 +393,19 @@ async function submitDispatch(): Promise<void> {
   }
 }
 
+/* ---------------- 复检 ---------------- */
+const recheckVisible = ref(false)
+const recheckRow = ref<DefectRow | null>(null)
+
+function openRecheck(row: DefectRow): void {
+  if (row.defect.state !== '已修复') {
+    ElMessage.warning('只有已修复的缺陷才能发起回访复检')
+    return
+  }
+  recheckRow.value = row
+  recheckVisible.value = true
+}
+
 /* ---------------- 行内辅助 ---------------- */
 function segmentText(row: DefectRow): string {
   if (!row.segment) return '分段缺失'
@@ -445,6 +459,7 @@ const summary = computed(() => ({
   dispatched: defectStore.stateCounts['已派工'],
   repaired: defectStore.stateCounts['已修复'],
   heavyPercent: defectStore.heavyPercent,
+  recheckTotal: defectStore.recheckTotal,
   areaText: formatArea(defectStore.totalAreaCm2),
   filtered: defectFilter.filteredCount.value
 }))
@@ -478,6 +493,7 @@ const tableRows = computed(() => defectFilter.sortedRows.value)
         tone="danger"
         icon="PieChart"
       />
+      <StatBadge label="累计复检" :value="summary.recheckTotal" suffix="次" tone="info" icon="Search" />
       <StatBadge label="损伤面积" :value="summary.areaText" tone="info" icon="Histogram" />
     </div>
 
@@ -573,6 +589,14 @@ const tableRows = computed(() => defectFilter.sortedRows.value)
           </template>
         </el-table-column>
         <el-table-column label="发现日期" prop="defect.foundAt" width="120" />
+        <el-table-column label="复检" width="130">
+          <template #default="{ row }">
+            <div class="cell-stack">
+              <span>{{ row.defect.recheckCount }} 次</span>
+              <span class="muted">最近 {{ row.defect.lastRecheckAt ?? '—' }}</span>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="110">
           <template #default="{ row }">
             <span
@@ -600,10 +624,19 @@ const tableRows = computed(() => defectFilter.sortedRows.value)
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column label="操作" width="320" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row.defect)">编辑</el-button>
             <el-button link type="primary" :icon="Tools" @click="openDispatch([row])">派工</el-button>
+            <el-button
+              v-if="row.defect.state === '已修复'"
+              link
+              type="warning"
+              :icon="Search"
+              @click="openRecheck(row)"
+            >
+              复检
+            </el-button>
             <el-button link type="primary" :icon="Position" @click="locate(row)">定位分段</el-button>
             <el-button link type="danger" @click="removeDefect(row)">删除</el-button>
           </template>
@@ -689,6 +722,8 @@ const tableRows = computed(() => defectFilter.sortedRows.value)
         <el-button type="primary" :loading="submitting" @click="submitForm">保存</el-button>
       </template>
     </el-dialog>
+
+    <RecheckDialog v-model="recheckVisible" :row="recheckRow" />
 
     <el-dialog v-model="dispatchVisible" title="派发维修工单" width="600px" destroy-on-close>
       <el-alert

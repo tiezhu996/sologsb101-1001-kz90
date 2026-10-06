@@ -8,13 +8,14 @@ import {
   type FormRules,
   type UploadFile
 } from 'element-plus'
-import { MagicStick, Picture, Plus, Upload, WarningFilled } from '@element-plus/icons-vue'
+import { MagicStick, Picture, Plus, Search, Upload, WarningFilled } from '@element-plus/icons-vue'
 import EmptyPanel from '@/components/common/EmptyPanel.vue'
 import FilterBar, { type FilterModel } from '@/components/common/FilterBar.vue'
+import RecheckDialog from '@/components/common/RecheckDialog.vue'
 import SeverityTag from '@/components/common/SeverityTag.vue'
 import StatBadge from '@/components/common/StatBadge.vue'
 import { useBladeStore } from '@/stores/bladeStore'
-import { useDefectStore } from '@/stores/defectStore'
+import { useDefectStore, type DefectRow } from '@/stores/defectStore'
 import { useTurbineStore } from '@/stores/turbineStore'
 import { useDefectFilter } from '@/hooks/useDefectFilter'
 import { percentOf } from '@/utils/severity'
@@ -509,6 +510,24 @@ async function handleStateChange(defect: Defect, state: DefectState): Promise<vo
   ElMessage.success(`缺陷状态已改为「${state}」`)
 }
 
+/* ---------------- 复检 ---------------- */
+const recheckVisible = ref(false)
+const recheckRow = ref<DefectRow | null>(null)
+
+function openRecheck(defect: Defect): void {
+  if (defect.state !== '已修复') {
+    ElMessage.warning('只有已修复的缺陷才能发起回访复检')
+    return
+  }
+  const row = defectStore.rows.find((item) => item.defect.id === defect.id) ?? null
+  if (!row) {
+    ElMessage.error('未找到该缺陷的归属信息，无法复检')
+    return
+  }
+  recheckRow.value = row
+  recheckVisible.value = true
+}
+
 async function removeDefect(defect: Defect): Promise<void> {
   try {
     await ElMessageBox.confirm(
@@ -682,6 +701,12 @@ const faceSummary = computed(() =>
                     <template #default="{ row: defect }">{{ defect.positionM }} m</template>
                   </el-table-column>
                   <el-table-column label="发现日期" prop="foundAt" width="120" />
+                  <el-table-column label="复检" width="120">
+                    <template #default="{ row: defect }">
+                      <span>{{ defect.recheckCount }} 次</span>
+                      <span class="muted"> · {{ defect.lastRecheckAt ?? '—' }}</span>
+                    </template>
+                  </el-table-column>
                   <el-table-column label="状态" width="150">
                     <template #default="{ row: defect }">
                       <el-select
@@ -693,9 +718,18 @@ const faceSummary = computed(() =>
                       </el-select>
                     </template>
                   </el-table-column>
-                  <el-table-column label="操作" width="150">
+                  <el-table-column label="操作" width="210">
                     <template #default="{ row: defect }">
                       <el-button link type="primary" @click="openDefectEdit(defect)">编辑</el-button>
+                      <el-button
+                        v-if="defect.state === '已修复'"
+                        link
+                        type="warning"
+                        :icon="Search"
+                        @click="openRecheck(defect)"
+                      >
+                        复检
+                      </el-button>
                       <el-button link type="danger" @click="removeDefect(defect)">删除</el-button>
                     </template>
                   </el-table-column>
@@ -750,7 +784,7 @@ const faceSummary = computed(() =>
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="缺陷 / 未闭环 / 重度" width="180">
+          <el-table-column label="缺陷 / 未闭环 / 重度 / 复检" width="240">
             <template #default="{ row }">
               <el-tag size="small" type="warning">{{ bladeStore.segmentStat(row.id).defectCount }} 条</el-tag>
               <el-tag size="small" type="danger" effect="plain">
@@ -759,6 +793,12 @@ const faceSummary = computed(() =>
               <el-tag size="small" type="info" effect="plain">
                 重度 {{ bladeStore.segmentStat(row.id).heavyCount }}
               </el-tag>
+              <el-tag size="small" type="success" effect="plain">
+                复检 {{ bladeStore.segmentStat(row.id).recheckCount }} 次
+              </el-tag>
+              <div v-if="bladeStore.segmentStat(row.id).lastRecheckAt" class="muted segment-recheck">
+                最近复检 {{ bladeStore.segmentStat(row.id).lastRecheckAt }}
+              </div>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="200" fixed="right">
@@ -907,6 +947,8 @@ const faceSummary = computed(() =>
       </template>
     </el-dialog>
 
+    <RecheckDialog v-model="recheckVisible" :row="recheckRow" />
+
     <el-dialog v-model="previewVisible" title="剖面图预览" width="720px">
       <div v-if="previewSegment" class="preview-box">
         <p class="mono">{{ previewSegment.sectionImage }}</p>
@@ -992,6 +1034,11 @@ const faceSummary = computed(() =>
 
 .preview-box__image {
   max-height: 420px;
+}
+
+.segment-recheck {
+  margin-top: 4px;
+  font-size: 12px;
 }
 
 .full-width {

@@ -313,6 +313,7 @@ watch(bladePanels, (panels) => {
             icon="SuccessFilled"
           />
           <StatBadge label="损伤面积" :value="formatArea(report.summary.areaCm2)" tone="warning" icon="Odometer" />
+          <StatBadge label="复检次数" :value="report.summary.recheckCount" suffix="次" tone="success" icon="Search" />
           <StatBadge label="工单 / 超期" :value="`${report.summary.workOrderCount} / ${report.summary.overdueCount}`" tone="info" icon="Files" />
         </div>
 
@@ -321,7 +322,7 @@ watch(bladePanels, (panels) => {
             <h3>
               巡检报告预览 · {{ report.turbine.code }}（{{ report.turbine.model }}）
             </h3>
-            <span class="muted">风险分 {{ report.summary.riskScore }} · 生成时间 {{ report.generatedAt.replace('T', ' ').slice(0, 19) }}</span>
+            <span class="muted">风险分 {{ report.summary.riskScore }} · 最近复检 {{ report.summary.lastRecheckAt ?? '—' }} · 生成时间 {{ report.generatedAt.replace('T', ' ').slice(0, 19) }}</span>
           </div>
           <el-descriptions :column="4" size="small" border class="report-meta">
             <el-descriptions-item label="轮毂高度">{{ report.turbine.hubHeightM }} m</el-descriptions-item>
@@ -410,6 +411,11 @@ watch(bladePanels, (panels) => {
                     {{ row.defectCount }} / {{ row.openCount }} / {{ row.heavyCount }}
                   </template>
                 </el-table-column>
+                <el-table-column label="复检 / 最近复检" width="150">
+                  <template #default="{ row }">
+                    {{ row.recheckCount }} 次 / {{ row.lastRecheckAt ?? '—' }}
+                  </template>
+                </el-table-column>
                 <el-table-column label="损伤面积" width="120">
                   <template #default="{ row }">{{ formatArea(row.areaCm2) }}</template>
                 </el-table-column>
@@ -432,6 +438,11 @@ watch(bladePanels, (panels) => {
                         <template #default="{ row: defect }">{{ defect.positionM }} m</template>
                       </el-table-column>
                       <el-table-column label="发现日期" prop="foundAt" width="120" />
+                      <el-table-column label="复检" width="130">
+                        <template #default="{ row: defect }">
+                          {{ defect.recheckCount }} 次 / {{ defect.lastRecheckAt ?? '—' }}
+                        </template>
+                      </el-table-column>
                       <el-table-column label="状态" width="100">
                         <template #default="{ row: defect }">
                           <span :style="{ color: stateColor(defect.state), fontWeight: 600 }">

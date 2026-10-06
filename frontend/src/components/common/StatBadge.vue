@@ -8,6 +8,7 @@ import {
   Histogram,
   Odometer,
   PieChart,
+  Search,
   TrendCharts,
   WarningFilled
 } from '@element-plus/icons-vue'
@@ -56,6 +57,7 @@ const iconMap: Record<string, Component> = {
   Histogram,
   Odometer,
   PieChart,
+  Search,
   TrendCharts,
   WarningFilled
 }

@@ -16,7 +16,7 @@ import {
   type BladeMaterial
 } from '@/types/blade'
 import type { Segment } from '@/types/segment'
-import type { Defect } from '@/types/defect'
+import { recheckSummaryOf, type Defect } from '@/types/defect'
 import type { WorkOrder } from '@/types/workOrder'
 import { percentOf } from '@/utils/severity'
 
@@ -113,6 +113,7 @@ export const useTurbineStore = defineStore('turbine', () => {
       const defectList = defectsOfTurbine(turbine.id)
       const openCount = defectList.filter((defect) => defect.state !== '已修复').length
       const heavyCount = defectList.filter((defect) => defect.severity === '重度').length
+      const recheck = recheckSummaryOf(defectList)
       return {
         turbineId: turbine.id,
         bladeCount: bladeList.length,
@@ -120,7 +121,9 @@ export const useTurbineStore = defineStore('turbine', () => {
         defectCount: defectList.length,
         openCount,
         heavyCount,
-        heavyPercent: percentOf(heavyCount, defectList.length)
+        heavyPercent: percentOf(heavyCount, defectList.length),
+        recheckCount: recheck.recheckCount,
+        lastRecheckAt: recheck.lastRecheckAt
       }
     })
   )

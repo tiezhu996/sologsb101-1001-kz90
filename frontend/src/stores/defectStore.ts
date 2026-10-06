@@ -8,6 +8,8 @@ import {
   type DefectFilterState,
   type DefectState,
   type DefectType,
+  type RecheckInput,
+  type RecheckOutcome,
   type Severity
 } from '@/types/defect'
 import type { Segment } from '@/types/segment'
@@ -142,6 +144,11 @@ export const useDefectStore = defineStore('defect', () => {
     percentOf(defects.value.length - openCount.value, defects.value.length)
   )
 
+  /** 全部缺陷的累计复检次数（缺陷列表汇总徽标直接消费） */
+  const recheckTotal = computed(() =>
+    defects.value.reduce((sum, defect) => sum + (defect.recheckCount ?? 0), 0)
+  )
+
   /** 按机组聚合缺陷数量，机组合账卡片直接消费 */
   const turbineAggregate = computed<
     Record<string, { total: number; open: number; heavy: number; areaCm2: number }>
@@ -218,8 +225,11 @@ export const useDefectStore = defineStore('defect', () => {
     return selectedIds.has(id)
   }
 
-  async function createDefect(payload: Omit<Defect, 'id' | 'createdAt' | 'updatedAt'>): Promise<Defect> {
-    return defectsTable.create(payload, 'dfc')
+  /** 新建缺陷的入参：复检字段由 store 补默认值，页面无需关心 */
+  type NewDefectPayload = Omit<Defect, 'id' | 'createdAt' | 'updatedAt' | 'recheckCount' | 'lastRecheckAt'>
+
+  async function createDefect(payload: NewDefectPayload): Promise<Defect> {
+    return defectsTable.create({ ...payload, recheckCount: 0, lastRecheckAt: null }, 'dfc')
   }
 
   async function updateDefect(id: string, patch: Partial<Defect>): Promise<void> {
@@ -301,6 +311,68 @@ export const useDefectStore = defineStore('defect', () => {
     return ids.length
   }
 
+  /**
+   * 复发匹配：复检位置落在原分段区间内时，同一分段中「已修复 + 类型一致」的
+   * 历史缺陷都算候选，离复检点最近的那条优先；位置出原分段或类型不符返回 null。
+   */
+  function matchRecheckTarget(origin: Defect, positionM: number, type: DefectType): Defect | null {
+    const segment = segments.value.find((item) => item.id === origin.segmentId)
+    if (!segment) return null
+    if (positionM < segment.startM || positionM > segment.endM) return null
+    const candidates = defects.value.filter(
+      (item) => item.segmentId === segment.id && item.type === type && item.state === '已修复'
+    )
+    if (candidates.length === 0) return null
+    return candidates.reduce((nearest, item) =>
+      Math.abs(item.positionM - positionM) < Math.abs(nearest.positionM - positionM) ? item : nearest
+    )
+  }
+
+  /**
+   * 回访复检：命中复发则复检次数加一、发现日期取复检日期、等级以本次填报为准、
+   * 状态回到待处理（原工单保持闭环，不撤回验收）；未命中则另存为新缺陷。
+   */
+  async function applyRecheck(input: RecheckInput): Promise<RecheckOutcome | null> {
+    const origin = defectById(input.defectId)
+    if (!origin) return null
+    const segment = segments.value.find((item) => item.id === origin.segmentId)
+    if (!segment) return null
+
+    const target = matchRecheckTarget(origin, input.positionM, input.type)
+    if (target) {
+      const recheckCount = (target.recheckCount ?? 0) + 1
+      await defectsTable.update(target.id, {
+        recheckCount,
+        lastRecheckAt: input.recheckAt,
+        foundAt: input.recheckAt,
+        severity: input.severity,
+        state: '待处理'
+      })
+      return { kind: 'recurred', defectId: target.id, recheckCount }
+    }
+
+    // 另存新缺陷：挂到同叶片包含复检位置的分段，找不到则留在原分段
+    const host =
+      segments.value.find(
+        (item) =>
+          item.bladeId === segment.bladeId &&
+          input.positionM >= item.startM &&
+          input.positionM <= item.endM
+      ) ?? segment
+    const created = await createDefect({
+      segmentId: host.id,
+      type: input.type,
+      severity: input.severity,
+      lengthMm: origin.lengthMm,
+      widthMm: origin.widthMm,
+      face: origin.face,
+      positionM: input.positionM,
+      foundAt: input.recheckAt,
+      state: '待处理'
+    })
+    return { kind: 'created', defectId: created.id }
+  }
+
   return {
     filter,
     selectedIds,
@@ -324,6 +396,7 @@ export const useDefectStore = defineStore('defect', () => {
     heavyCount,
     heavyPercent,
     closedPercent,
+    recheckTotal,
     turbineAggregate,
     hasFilter,
     patchFilter,
@@ -345,6 +418,8 @@ export const useDefectStore = defineStore('defect', () => {
     bulkSetType,
     bulkSetFace,
     bulkSetState,
-    setState
+    setState,
+    matchRecheckTarget,
+    applyRecheck
   }
 })

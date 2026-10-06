@@ -53,11 +53,22 @@ docker compose up -d --build      # 代码改动后重新构建
 
 | 路由 | 页面 | 消费模型 | 主要交互 |
 | --- | --- | --- | --- |
-| `/turbines` | 机组合账 | Turbine、Blade、Defect | 新建机组并**按叶片数派生叶片记录**、按机型 / 投运年份筛选、卡片回显缺陷总数与未闭环数、编辑时同步增删叶片、级联删除 |
-| `/blades/:id/segments` | 叶片分段与剖面 | Blade、Segment、Defect | 叶片切换、**按段数批量生成展向分段**、单段新增 / 编辑 / 删除、上传剖面图（本地预览）、按检修面查看段内缺陷、行内改状态 |
-| `/defects` | 缺陷标注台 | Defect、Segment | 按机组 / 类型 / 程度 / 面位 / 状态组合筛选（同步 URL query）、单条标注、勾选后批量改等级 / 改类型 / 改状态、批量派工、批量删除 |
+| `/turbines` | 机组合账 | Turbine、Blade、Defect | 新建机组并**按叶片数派生叶片记录**、按机型 / 投运年份筛选、卡片回显缺陷总数与未闭环数（含复检次数与最近复检日期）、编辑时同步增删叶片、级联删除 |
+| `/blades/:id/segments` | 叶片分段与剖面 | Blade、Segment、Defect | 叶片切换、**按段数批量生成展向分段**、单段新增 / 编辑 / 删除、上传剖面图（本地预览）、按检修面查看段内缺陷（段内汇总带复检次数与最近复检日期）、行内改状态、已修复缺陷发起复检 |
+| `/defects` | 缺陷标注台 | Defect、Segment | 按机组 / 类型 / 程度 / 面位 / 状态组合筛选（同步 URL query）、单条标注、勾选后批量改等级 / 改类型 / 改状态、批量派工、批量删除、**已修复缺陷回访复检** |
 | `/workorders` | 维修工单 | WorkOrder、Defect | 按班组与状态筛选、派工建单、限期跟催（超期高亮）、状态流转 `待派 → 处理中 → 待验收 → 已闭环`、验收回写缺陷为已修复、撤回验收、删除后同步缺陷状态 |
-| `/report` | 报告与导出 | 全部模型 | 按机组生成巡检报告预览（分级分布、分段明细、工单跟踪）、查看数据结构版本、导出报告 / 全量备份 JSON、导入 JSON（覆盖 / 合并 / 追加）、清空与重新播种 |
+| `/report` | 报告与导出 | 全部模型 | 按机组生成巡检报告预览（分级分布、分段明细含复检汇总、工单跟踪）、查看数据结构版本、导出报告 / 全量备份 JSON、导入 JSON（覆盖 / 合并 / 追加）、清空与重新播种 |
+
+---
+
+### 复检与复发判定
+
+运维班组修完缺陷三到六个月后可回访复检：在缺陷标注台或叶片分段页挑一条**已修复**缺陷，点「复检」填复检日期、位置米数与本次等级。
+
+- **复发**：复检位置仍落在原分段区间且类型一致 → 复检次数加一、发现日期取复检日期、等级以本次填报为准、状态回到待处理；原工单保持闭环，不撤回验收。同一分段多条历史缺陷都能匹配时，位置离复检点最近的那条优先。
+- **新缺陷**：位置出原分段或类型不符 → 按本次填报另存一条待处理缺陷（自动挂到同叶片包含该位置的分段）。
+
+缺陷列表、段内汇总、机组卡片未闭环数与巡检报告均回显复检次数与最近复检日期。
 
 ---
 
@@ -97,7 +108,7 @@ sologsb101-1001/
         ├── types/                # turbine.ts blade.ts segment.ts defect.ts workOrder.ts
         ├── stores/               # turbineStore.ts bladeStore.ts defectStore.ts workOrderStore.ts
         ├── hooks/                # useDefectFilter.ts useIdbTable.ts
-        ├── components/common/    # SeverityTag.vue FilterBar.vue StatBadge.vue EmptyPanel.vue
+        ├── components/common/    # SeverityTag.vue FilterBar.vue StatBadge.vue EmptyPanel.vue RecheckDialog.vue
         ├── utils/                # db.ts severity.ts report.ts export.ts
         ├── pages/                # TurbineList.vue BladeSegment.vue DefectBoard.vue WorkOrderList.vue ReportView.vue
         └── router/index.ts       # /turbines、/blades/:id/segments、/defects、/workorders、/report
@@ -112,7 +123,7 @@ sologsb101-1001/
 | 项目 | 说明 |
 | --- | --- |
 | 库名 | IndexedDB `gbwindblade`（Dexie 封装） |
-| 结构版本 | `DB_VERSION = 2`，`utils/db.ts` 内含版本号与 `upgrade` 迁移（补全缺陷状态、工单验收字段、分段剖面图字段） |
+| 结构版本 | `DB_VERSION = 3`，`utils/db.ts` 内含版本号与 `upgrade` 迁移（补全缺陷状态、工单验收字段、分段剖面图字段、缺陷复检次数与最近复检日期） |
 | 对象表 | `turbines`、`blades`、`segments`、`defects`、`workOrders`，均按 `id` 主键 + 外键索引 |
 | 级联关系 | 机组 → 叶片 → 展向分段 → 缺陷 → 维修工单；删除上级会级联清理下级记录 |
 | localStorage | `gbwindblade:ui-prefs`（上次查看的机组 / 叶片）、`gbwindblade:db-version`、`gbwindblade:last-backup-at` |

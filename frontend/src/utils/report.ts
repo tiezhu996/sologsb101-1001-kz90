@@ -1,6 +1,6 @@
 import type { Blade } from '@/types/blade'
 import type { Segment } from '@/types/segment'
-import { DEFECT_STATES, DEFECT_TYPES, SEVERITIES, type Defect, type DefectState, type DefectType, type Severity } from '@/types/defect'
+import { DEFECT_STATES, DEFECT_TYPES, SEVERITIES, recheckSummaryOf, type Defect, type DefectState, type DefectType, type Severity } from '@/types/defect'
 import { WORK_ORDER_STATES, isOverdue, type WorkOrder, type WorkOrderState } from '@/types/workOrder'
 import { defectAreaCm2, percentOf, SEVERITY_WEIGHT } from '@/utils/severity'
 
@@ -18,6 +18,10 @@ export interface ReportSegmentLine {
   openCount: number
   heavyCount: number
   areaCm2: number
+  /** 段内缺陷累计复检次数 */
+  recheckCount: number
+  /** 段内最近复检日期，无复检记录为 null */
+  lastRecheckAt: string | null
   defects: Defect[]
 }
 
@@ -68,6 +72,10 @@ export interface TurbineReport {
     workOrderCount: number
     overdueCount: number
     riskScore: number
+    /** 全机组缺陷累计复检次数 */
+    recheckCount: number
+    /** 全机组最近复检日期，无复检记录为 null */
+    lastRecheckAt: string | null
   }
   severityDist: ReportDistributionRow[]
   typeDist: ReportDistributionRow[]
@@ -111,12 +119,15 @@ export function buildTurbineReport(
         const defects = source.defects
           .filter((defect) => defect.segmentId === segment.id)
           .sort((a, b) => SEVERITY_WEIGHT[b.severity] - SEVERITY_WEIGHT[a.severity])
+        const recheck = recheckSummaryOf(defects)
         return {
           segment,
           defectCount: defects.length,
           openCount: defects.filter((defect) => defect.state !== '已修复').length,
           heavyCount: defects.filter((defect) => defect.severity === '重度').length,
           areaCm2: defects.reduce((sum, defect) => sum + defectAreaCm2(defect.lengthMm, defect.widthMm), 0),
+          recheckCount: recheck.recheckCount,
+          lastRecheckAt: recheck.lastRecheckAt,
           defects
         }
       })
@@ -175,6 +186,7 @@ export function buildTurbineReport(
 
   const closedCount = defects.filter((defect) => defect.state === '已修复').length
   const riskScore = defects.reduce((sum, defect) => sum + SEVERITY_WEIGHT[defect.severity], 0)
+  const recheck = recheckSummaryOf(defects)
 
   return {
     app: 'gbwindblade',
@@ -194,7 +206,9 @@ export function buildTurbineReport(
       areaCm2,
       workOrderCount: workOrders.length,
       overdueCount: workOrders.filter((line) => line.overdue).length,
-      riskScore
+      riskScore,
+      recheckCount: recheck.recheckCount,
+      lastRecheckAt: recheck.lastRecheckAt
     },
     severityDist: distribution(SEVERITIES as string[], severityCounts, defects.length),
     typeDist: distribution(DEFECT_TYPES as string[], typeCounts, defects.length),
@@ -235,6 +249,9 @@ export function reportToText(report: TurbineReport): string {
     `  未闭环 ${report.summary.openCount} 条｜已修复 ${report.summary.closedCount} 条｜重度 ${report.summary.heavyCount} 条（${report.summary.heavyPercent}%）`
   )
   lines.push(
+    `  复检 ${report.summary.recheckCount} 次｜最近复检 ${report.summary.lastRecheckAt ?? '—'}`
+  )
+  lines.push(
     `  损伤面积 ${report.summary.areaCm2} cm²｜工单 ${report.summary.workOrderCount} 张（超期 ${report.summary.overdueCount} 张）｜风险分 ${report.summary.riskScore}`
   )
   lines.push('')
@@ -254,11 +271,13 @@ export function reportToText(report: TurbineReport): string {
     )
     section.segments.forEach((line) => {
       lines.push(
-        `    第 ${line.segment.index} 段 ${line.segment.startM}-${line.segment.endM} m｜${line.segment.face}｜翼型 ${line.segment.airfoil}｜剖面图 ${line.segment.sectionImage || '未上传'}｜缺陷 ${line.defectCount} 条`
+        `    第 ${line.segment.index} 段 ${line.segment.startM}-${line.segment.endM} m｜${line.segment.face}｜翼型 ${line.segment.airfoil}｜剖面图 ${line.segment.sectionImage || '未上传'}｜缺陷 ${line.defectCount} 条｜复检 ${line.recheckCount} 次（最近 ${line.lastRecheckAt ?? '—'}）`
       )
       line.defects.forEach((defect) => {
+        const recheckText =
+          defect.recheckCount > 0 ? `｜复检 ${defect.recheckCount} 次（最近 ${defect.lastRecheckAt ?? '—'}）` : ''
         lines.push(
-          `      · ${defect.type}（${defect.severity}）${defect.lengthMm}×${defect.widthMm} mm｜${defect.face}｜${defect.positionM} m｜发现 ${defect.foundAt}｜${defect.state}`
+          `      · ${defect.type}（${defect.severity}）${defect.lengthMm}×${defect.widthMm} mm｜${defect.face}｜${defect.positionM} m｜发现 ${defect.foundAt}｜${defect.state}${recheckText}`
         )
       })
     })

@@ -94,6 +94,8 @@ const cards = computed(() =>
       defectCount: stat?.defectCount ?? 0,
       openCount: stat?.openCount ?? 0,
       heavyPercent: stat?.heavyPercent ?? 0,
+      recheckCount: stat?.recheckCount ?? 0,
+      lastRecheckAt: stat?.lastRecheckAt ?? null,
       areaText: formatArea(aggregate?.areaCm2 ?? 0),
       orderCount: turbineStore.workOrdersOfTurbine(turbine.id).length,
       year: commissionYearOf(turbine)
@@ -311,6 +313,10 @@ const summary = computed(() => turbineStore.totals)
           <el-descriptions-item label="未闭环">
             <span class="mono text-danger">{{ card.openCount }}</span> 条
           </el-descriptions-item>
+          <el-descriptions-item label="复检次数">
+            <span class="mono">{{ card.recheckCount }}</span> 次
+          </el-descriptions-item>
+          <el-descriptions-item label="最近复检">{{ card.lastRecheckAt ?? '—' }}</el-descriptions-item>
           <el-descriptions-item label="损伤面积">{{ card.areaText }}</el-descriptions-item>
           <el-descriptions-item label="维修工单">{{ card.orderCount }} 张</el-descriptions-item>
         </el-descriptions>

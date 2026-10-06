@@ -46,6 +46,10 @@ export interface TurbineStat {
   heavyCount: number
   /** 重度占比，0-100 的整数 */
   heavyPercent: number
+  /** 全机组缺陷累计复检次数 */
+  recheckCount: number
+  /** 全机组最近复检日期，无复检记录为 null */
+  lastRecheckAt: string | null
 }
 
 /** 投运年份筛选：从投运日期中截取年份 */
